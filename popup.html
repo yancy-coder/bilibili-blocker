@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>B站内容屏蔽助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 头部 -->
+    <header class="header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#FB7299"/>
+          <path d="M9 12l2 2 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>B站屏蔽助手</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="enableToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <!-- 统计信息 -->
+    <div class="stats">
+      <div class="stat-item">
+        <span class="stat-value" id="blockCount">0</span>
+        <span class="stat-label">已屏蔽</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value" id="keywordCount">0</span>
+        <span class="stat-label">关键词</span>
+      </div>
+    </div>
+
+    <!-- 关键词输入 -->
+    <div class="section">
+      <div class="section-header">
+        <h3>屏蔽关键词</h3>
+        <button class="btn-text" id="clearAllBtn">清空</button>
+      </div>
+      <div class="input-group">
+        <input type="text" id="keywordInput" placeholder="输入关键词，按回车添加..." maxlength="50">
+        <button class="btn-primary" id="addBtn">添加</button>
+      </div>
+      <div class="keywords-list" id="keywordsList">
+        <!-- 关键词标签会在这里显示 -->
+      </div>
+      <p class="hint">支持屏蔽：视频标题、UP主名称、动态内容、评论等</p>
+    </div>
+
+    <!-- 屏蔽模式 -->
+    <div class="section">
+      <h3>屏蔽模式</h3>
+      <div class="radio-group">
+        <label class="radio-item">
+          <input type="radio" name="blockMode" value="hide" checked>
+          <span class="radio-custom"></span>
+          <span class="radio-label">
+            <strong>完全隐藏</strong>
+            <small>彻底屏蔽，页面更清爽</small>
+          </span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="blockMode" value="blur">
+          <span class="radio-custom"></span>
+          <span class="radio-label">
+            <strong>模糊显示</strong>
+            <small>内容模糊，点击可查看</small>
+          </span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="blockMode" value="transparent">
+          <span class="radio-custom"></span>
+          <span class="radio-label">
+            <strong>半透明</strong>
+            <small>淡化显示，仍可识别</small>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 高级选项 -->
+    <div class="section">
+      <div class="checkbox-group">
+        <label class="checkbox-item">
+          <input type="checkbox" id="showReason" checked>
+          <span class="checkbox-custom"></span>
+          <span>显示屏蔽原因（模糊/半透明模式）</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="actions">
+      <button class="btn-secondary" id="exportBtn">导出配置</button>
+      <button class="btn-secondary" id="importBtn">导入配置</button>
+      <input type="file" id="importFile" accept=".json" style="display: none;">
+    </div>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+      <button class="btn-link" id="resetBtn">重置统计</button>
+      <span class="version">v1.0.0</span>
+    </footer>
+  </div>
+
+  <!-- 导入/导出提示 -->
+  <div class="toast" id="toast"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

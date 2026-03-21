@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr:*)",
+      "Bash(where gh:*)",
+      "Bash(command:*)",
+      "Bash(git init:*)",
+      "Bash(magick:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

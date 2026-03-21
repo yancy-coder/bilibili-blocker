@@ -1,0 +1,117 @@
+/* B站屏蔽助手 - 内容样式 */
+
+/* 隐藏模式 - 完全隐藏 */
+[data-blocked-by="bilibili-blocker"][data-block-mode="hide"] {
+  display: none !important;
+}
+
+/* 模糊模式 */
+[data-blocked-by="bilibili-blocker"][data-block-mode="blur"] {
+  filter: blur(8px) !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  position: relative !important;
+}
+
+/* 半透明模式 */
+[data-blocked-by="bilibili-blocker"][data-block-mode="transparent"] {
+  opacity: 0.1 !important;
+  pointer-events: none !important;
+  position: relative !important;
+}
+
+/* 屏蔽标记样式 */
+.bilibili-blocker-badge {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  background: rgba(251, 114, 153, 0.95) !important;
+  color: white !important;
+  padding: 8px 16px !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.2s ease !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+.bilibili-blocker-badge:hover {
+  background: rgba(251, 114, 153, 1) !important;
+  transform: translate(-50%, -50%) scale(1.05) !important;
+}
+
+/* 确保卡片有相对定位，以便 badge 正确定位 */
+.bili-video-card,
+.bili-video-card__wrap,
+.feed-card,
+.search-item,
+.video-list-item,
+.bili-dyn-item,
+.bili-dyn-list__item,
+.reply-item,
+.comment-item,
+.live-card,
+.room-card {
+  position: relative !important;
+}
+
+/* 防止被屏蔽的内容占用空间 */
+
+/* 动画效果 */
+@keyframes blockerFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+[data-blocked-by="bilibili-blocker"].blocker-animating {
+  animation: blockerFadeOut 0.2s ease forwards;
+}
+
+/* 统计信息浮动按钮（可选） */
+.bilibili-blocker-stats {
+  position: fixed !important;
+  bottom: 20px !important;
+  right: 20px !important;
+  background: rgba(251, 114, 153, 0.95) !important;
+  color: white !important;
+  padding: 10px 16px !important;
+  border-radius: 20px !important;
+  font-size: 13px !important;
+  z-index: 2147483646 !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 12px rgba(251, 114, 153, 0.4) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: all 0.3s ease !important;
+}
+
+.bilibili-blocker-stats:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 16px rgba(251, 114, 153, 0.5) !important;
+}
+
+.bilibili-blocker-stats-icon {
+  width: 16px !important;
+  height: 16px !important;
+  fill: currentColor !important;
+}
+
+.bilibili-blocker-stats-text {
+  font-weight: 500 !important;
+}
+
+/* 确保屏蔽样式优先级最高 */
