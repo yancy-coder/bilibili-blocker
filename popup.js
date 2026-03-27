@@ -9,12 +9,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     blockMode: 'hide',
     showBlockReason: true,
     blockCount: 0,
-    enabled: true
+    enabled: true,
+    enableOCR: true,
+    ocrConfidence: 60,
+    ocrInterval: 2000,
   };
 
   // DOM 元素
   const elements = {
     enableToggle: document.getElementById('enableToggle'),
+    ocrToggle: document.getElementById('ocrToggle'),
+    ocrStatus: document.getElementById('ocrStatus'),
+    ocrDesc: document.getElementById('ocrDesc'),
+    hoverToggle: document.getElementById('hoverToggle'),
+    hoverStatus: document.getElementById('hoverStatus'),
     blockCount: document.getElementById('blockCount'),
     keywordCount: document.getElementById('keywordCount'),
     keywordInput: document.getElementById('keywordInput'),
@@ -39,9 +47,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         config = { ...config, ...result.bilibiliBlockerConfig };
       }
     } catch (e) {
-      console.error('加载配置失败:', e);
+      console.error('[B站屏蔽助手] 加载配置失败:', e.message);
     }
     updateUI();
+    updateOCRStatus();
   }
 
   // 保存配置
@@ -51,7 +60,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 通知内容脚本更新
       await notifyContentScript({ action: 'updateConfig', config });
     } catch (e) {
-      console.error('保存配置失败:', e);
+      console.error('[B站屏蔽助手] 保存配置失败:', e.message);
+      showToast('保存失败: ' + e.message);
     }
   }
 
@@ -63,7 +73,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         await chrome.tabs.sendMessage(tab.id, message);
       }
     } catch (e) {
-      // 忽略错误，可能页面没有加载脚本
+      console.warn('[B站屏蔽助手] 通知内容脚本失败:', e.message);
+    }
+  }
+
+  // 获取 OCR 状态
+  async function updateOCRStatus() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.url && tab.url.includes('bilibili.com')) {
+        const response = await chrome.tabs.sendMessage(tab.id, { action: 'getOCRStatus' });
+        if (response) {
+          if (response.ready) {
+            elements.ocrDesc.textContent = `引擎就绪 | 缓存: ${response.cacheSize} | 队列: ${response.queueLength}`;
+            elements.ocrStatus.classList.add('ready');
+          } else if (response.enabled) {
+            elements.ocrDesc.textContent = '引擎初始化中...';
+            elements.ocrStatus.classList.remove('ready');
+          } else {
+            elements.ocrDesc.textContent = '已禁用（仅文本匹配）';
+            elements.ocrStatus.classList.remove('ready');
+          }
+        }
+      } else {
+        elements.ocrDesc.textContent = '请在B站页面使用';
+        elements.ocrStatus.classList.remove('ready');
+      }
+    } catch (e) {
+      elements.ocrDesc.textContent = config.enableOCR ? '等待页面加载...' : '已禁用';
+      elements.ocrStatus.classList.remove('ready');
     }
   }
 
@@ -71,6 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateUI() {
     // 开关状态
     elements.enableToggle.checked = config.enabled;
+    elements.ocrToggle.checked = config.enableOCR;
     
     // 统计
     elements.blockCount.textContent = config.blockCount.toLocaleString();
@@ -83,6 +122,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 显示原因
     elements.showReason.checked = config.showBlockReason;
+    
+    // 悬停菜单开关
+    elements.hoverToggle.checked = config.enableHoverMenu !== false; // 默认开启
     
     // 关键词列表
     renderKeywords();
@@ -202,7 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function exportConfig() {
     const data = {
       name: 'B站屏蔽助手配置',
-      version: '1.0.0',
+      version: '1.0.2',
       exportTime: new Date().toISOString(),
       config: config
     };
@@ -225,7 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const data = JSON.parse(e.target.result);
         if (data.config) {
           // 只接受已知字段，防止注入未知属性
-          const validKeys = ['keywords', 'blockMode', 'showBlockReason', 'blockCount', 'enabled'];
+          const validKeys = ['keywords', 'blockMode', 'showBlockReason', 'blockCount', 'enabled', 'enableOCR', 'ocrConfidence', 'ocrInterval', 'enableHoverMenu'];
           const imported = {};
           for (const key of validKeys) {
             if (key in data.config) {
@@ -246,6 +288,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           config = { ...config, ...imported };
           saveConfig();
           updateUI();
+          updateOCRStatus();
           showToast('配置已导入');
         } else {
           showToast('配置文件格式错误');
@@ -281,6 +324,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.enableToggle.checked = config.enabled;
     updateDisabledState();
     showToast(config.enabled ? '屏蔽已开启' : '屏蔽已关闭');
+  });
+
+  // OCR 开关
+  elements.ocrToggle.addEventListener('change', async () => {
+    config.enableOCR = elements.ocrToggle.checked;
+    await saveConfig();
+    showToast(config.enableOCR ? '图像识别已开启' : '图像识别已关闭');
+    updateOCRStatus();
+  });
+
+  // 悬停菜单开关
+  elements.hoverToggle.addEventListener('change', async () => {
+    config.enableHoverMenu = elements.hoverToggle.checked;
+    await saveConfig();
+    showToast(config.enableHoverMenu ? '悬停菜单已开启' : '悬停菜单已关闭');
   });
 
   // 添加关键词
@@ -344,7 +402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 定时更新统计
+  // 定时更新统计和 OCR 状态
   setInterval(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -356,6 +414,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
     } catch (e) {}
+    
+    // 更新 OCR 状态
+    updateOCRStatus();
   }, 2000);
 
   // 初始化

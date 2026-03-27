@@ -1,111 +1,495 @@
 /**
  * B站内容屏蔽助手 - 内容脚本
- * 自动屏蔽包含关键词的内容
  */
+
+// ========== 防闪烁 CSS ==========
+(function preventFlash() {
+  const style = document.createElement('style');
+  style.id = 'bilibili-blocker-initial-hide';
+  style.textContent = `
+    .video-card, .bili-video-card, .feed-card,
+    .search-item, .video-list-item, .small-item,
+    .rank-item, .video-list-card, .bili-video-card__wrap,
+    .bili-dyn-item, .bili-dyn-list__item, .reply-item,
+    .comment-item, .live-card, .room-card {
+      visibility: hidden !important;
+    }
+  `;
+  const target = document.head || document.documentElement;
+  if (target) target.appendChild(style);
+})();
 
 (function() {
   'use strict';
 
-  // 配置
+  // ============ 配置 ============
   let config = {
     keywords: [],
-    blockMode: 'hide', // 'hide' | 'blur' | 'transparent'
+    blockMode: 'hide',
     showBlockReason: true,
     blockCount: 0,
-    enabled: true
+    enabled: true,
+    enableOCR: true,
+    ocrConfidence: 30,
+    enableHoverMenu: true,  // 悬停菜单开关
   };
 
-  // 存储已处理的元素，避免重复处理
   let processedElements = new WeakSet();
+  let tesseractWorker = null;
+  let isOCRReady = false;
+  const ocrCache = new Map();
+  let hoverMenuElement = null;
+  let currentHoverElement = null;
 
-  // 选择器配置 - 针对不同页面类型的元素
   const selectors = {
-    // 视频卡片（首页推荐、搜索结果、分区等）
     videoCard: [
-      '.video-card',                    // 通用视频卡片
-      '.bili-video-card',              // 新版视频卡片
-      '.feed-card',                    // 动态视频卡片
-      '.search-item',                  // 搜索结果
-      '.video-list-item',              // 视频列表项
-      '[data-evtid]:not([data-evtid=""])', // 通用视频项
-      '.small-item',                   // 小卡片
-      '.rank-item',                    // 排行榜
-      '.card-box .video-card',         // 综合区
-      '.recommend-list .video-card',   // 推荐列表
-      '.popular-video-list .video-card', // 热门视频
-      '.video-list-card',              // 列表卡片
-      '.bili-video-card__wrap',        // 新版卡片包装
+      '.video-card', '.bili-video-card', '.feed-card', '.search-item',
+      '.video-list-item', '[data-evtid]:not([data-evtid=""])', '.small-item',
+      '.rank-item', '.video-list-card', '.bili-video-card__wrap',
     ],
-    // 标题相关
     title: [
-      '.bili-video-card__info--tit a', // 视频标题链接
-      '.bili-video-card__info--tit',   // 视频标题
-      '.video-name',                   // 视频名称
-      '.title-row a',                  // 标题行链接
-      '.title',                        // 通用标题
-      '.search-title',                 // 搜索标题
-      '.video-title',                  // 视频标题
-      'h3.title',                      // 标题h3
-      '.name a',                       // 名称链接
-      '.card-box .title',              // 卡片标题
+      '.bili-video-card__info--tit a', '.bili-video-card__info--tit',
+      '.video-name', '.title-row a', '.title', '.search-title',
+      '.video-title', 'h3.title', '.name a',
     ],
-    // UP主名称
     upName: [
-      '.bili-video-card__info--author', // UP主名
-      '.up-name',                       // UP主名
-      '.up-name__display',             // 显示名
-      '.author',                        // 作者
-      '.name',                          // 名称
-      '.up-info .name a',              // UP信息名
-      '.owner-name',                   // 拥有者名
-      '.card-box .author',             // 卡片作者
-      '.up-info--tag a',               // UP标签
+      '.bili-video-card__info--author', '.up-name', '.up-name__display',
+      '.author', '.name', '.up-info .name a', '.owner-name',
     ],
-    // 动态内容
-    dynamic: [
-      '.bili-dyn-item',                // 动态项
-      '.bili-dyn-list__item',          // 动态列表项
-      '.bili-dyn-content',             // 动态内容
-      '.bili-dyn-title',               // 动态标题
-      '.bili-dyn-card',                // 动态卡片
+    coverImage: [
+      '.bili-video-card__image img', '.bili-video-card__cover img',
+      '.video-card img', '.cover img', '.pic img',
     ],
-    // 评论
-    comment: [
-      '.reply-item',                   // 回复项
-      '.comment-item',                 // 评论项
-      '.reply-content',                // 回复内容
-      '.comment-content',              // 评论内容
-      '.text-con',                     // 文本内容
-    ],
-    // 直播
-    live: [
-      '.live-card',                    // 直播卡片
-      '.room-card',                    // 房间卡片
-      '.living-room-item',             // 直播间项
-      '.live-item',                    // 直播项
-    ],
-    // 番剧/影视
-    bangumi: [
-      '.bangumi-card',                 // 番剧卡片
-      '.bangumi-item',                 // 番剧项
-      '.follow-item',                  // 追番项
-    ],
-    // 广告/推广
-    ad: [
-      '.ad-report',                    // 广告报告
-      '.ad-floor',                     // 广告楼层
-      '.ad-swiper',                    // 广告轮播
-      '[class*="ad-"]',                // 广告类
-      '[class*="advert"]',             // 广告类
-    ]
   };
 
-  // 合并所有选择器
-  const allSelectors = Object.values(selectors).flat().join(', ');
+  const allSelectors = [...selectors.videoCard, ...selectors.title].join(', ');
+
+  // ============ 悬停菜单功能 ============
+  
+  /**
+   * 创建悬停菜单
+   */
+  function createHoverMenu() {
+    if (hoverMenuElement) return;
+    
+    const menu = document.createElement('div');
+    menu.id = 'bilibili-blocker-hover-menu';
+    menu.innerHTML = `
+      <div class="bb-hover-header">
+        <span class="bb-hover-title">🛡️ 屏蔽助手</span>
+        <button class="bb-hover-close">×</button>
+      </div>
+      <div class="bb-hover-content">
+        <div class="bb-hover-section">
+          <div class="bb-hover-label">视频标题</div>
+          <div class="bb-hover-title-text" title=""></div>
+        </div>
+        <div class="bb-hover-section">
+          <div class="bb-hover-label">UP主</div>
+          <div class="bb-hover-up-text"></div>
+        </div>
+        <div class="bb-hover-actions">
+          <button class="bb-hover-btn bb-hover-block-title" title="将视频标题加入屏蔽关键词">
+            📝 屏蔽标题
+          </button>
+          <button class="bb-hover-btn bb-hover-block-up" title="将该UP主加入屏蔽关键词">
+            👤 屏蔽UP主
+          </button>
+          <button class="bb-hover-btn bb-hover-block-now" title="立即屏蔽此视频（仅当前页面）">
+            🚫 立即屏蔽
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // 添加样式
+    const style = document.createElement('style');
+    style.textContent = `
+      #bilibili-blocker-hover-menu {
+        position: fixed;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.1);
+        padding: 0;
+        z-index: 2147483647;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 13px;
+        min-width: 220px;
+        max-width: 280px;
+        opacity: 0;
+        transform: translateY(-10px) scale(0.95);
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        pointer-events: none;
+        border: 1px solid rgba(0,0,0,0.08);
+        overflow: hidden;
+      }
+      #bilibili-blocker-hover-menu.bb-show {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+      }
+      .bb-hover-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        background: linear-gradient(135deg, #FB7299 0%, #FC8BAB 100%);
+        color: white;
+      }
+      .bb-hover-title {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .bb-hover-close {
+        background: rgba(255,255,255,0.2);
+        border: none;
+        color: white;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: background 0.2s;
+      }
+      .bb-hover-close:hover {
+        background: rgba(255,255,255,0.3);
+      }
+      .bb-hover-content {
+        padding: 12px;
+      }
+      .bb-hover-section {
+        margin-bottom: 10px;
+      }
+      .bb-hover-label {
+        color: #9499a0;
+        font-size: 11px;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .bb-hover-title-text, .bb-hover-up-text {
+        color: #18191c;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.4;
+      }
+      .bb-hover-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #e3e5e7;
+      }
+      .bb-hover-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .bb-hover-block-title {
+        background: #f6f7f8;
+        color: #18191c;
+      }
+      .bb-hover-block-title:hover {
+        background: #e3e5e7;
+      }
+      .bb-hover-block-up {
+        background: #f6f7f8;
+        color: #18191c;
+      }
+      .bb-hover-block-up:hover {
+        background: #e3e5e7;
+      }
+      .bb-hover-block-now {
+        background: linear-gradient(135deg, #FB7299 0%, #FC8BAB 100%);
+        color: white;
+      }
+      .bb-hover-block-now:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(menu);
+    
+    // 绑定关闭按钮
+    menu.querySelector('.bb-hover-close').addEventListener('click', hideHoverMenu);
+    
+    // 绑定功能按钮
+    menu.querySelector('.bb-hover-block-title').addEventListener('click', () => {
+      if (currentHoverElement) {
+        const title = extractVideoInfo(currentHoverElement).title;
+        if (title) addKeywordAndBlock(title, '标题');
+      }
+    });
+    
+    menu.querySelector('.bb-hover-block-up').addEventListener('click', () => {
+      if (currentHoverElement) {
+        const upName = extractVideoInfo(currentHoverElement).upName;
+        if (upName) addKeywordAndBlock(upName, 'UP主');
+      }
+    });
+    
+    menu.querySelector('.bb-hover-block-now').addEventListener('click', () => {
+      if (currentHoverElement) {
+        blockElement(currentHoverElement, '用户手动屏蔽');
+        hideHoverMenu();
+        showToast('已屏蔽此视频');
+      }
+    });
+    
+    hoverMenuElement = menu;
+  }
+
+  /**
+   * 显示悬停菜单
+   */
+  function showHoverMenu(element, x, y) {
+    if (!config.enableHoverMenu || !config.enabled) return;
+    if (!hoverMenuElement) createHoverMenu();
+    
+    const info = extractVideoInfo(element);
+    if (!info.title && !info.upName) return;
+    
+    currentHoverElement = element;
+    
+    // 更新内容
+    const titleEl = hoverMenuElement.querySelector('.bb-hover-title-text');
+    const upEl = hoverMenuElement.querySelector('.bb-hover-up-text');
+    
+    titleEl.textContent = info.title || '未知标题';
+    titleEl.title = info.title || '';
+    upEl.textContent = info.upName || '未知UP主';
+    
+    // 计算位置（避免超出屏幕）
+    const rect = hoverMenuElement.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    let left = x + 15;
+    let top = y + 15;
+    
+    if (left + rect.width > viewportWidth) {
+      left = x - rect.width - 10;
+    }
+    if (top + rect.height > viewportHeight) {
+      top = y - rect.height - 10;
+    }
+    
+    hoverMenuElement.style.left = left + 'px';
+    hoverMenuElement.style.top = top + 'px';
+    hoverMenuElement.classList.add('bb-show');
+  }
+
+  /**
+   * 隐藏悬停菜单
+   */
+  function hideHoverMenu() {
+    if (hoverMenuElement) {
+      hoverMenuElement.classList.remove('bb-show');
+      currentHoverElement = null;
+    }
+  }
+
+  /**
+   * 提取视频信息
+   */
+  function extractVideoInfo(element) {
+    let title = '';
+    let upName = '';
+    
+    for (const sel of selectors.title) {
+      const el = element.querySelector(sel);
+      if (el && el.textContent) {
+        title = el.textContent.trim();
+        break;
+      }
+    }
+    
+    for (const sel of selectors.upName) {
+      const el = element.querySelector(sel);
+      if (el && el.textContent) {
+        upName = el.textContent.trim();
+        break;
+      }
+    }
+    
+    return { title, upName };
+  }
+
+  /**
+   * 添加关键词并重新屏蔽
+   */
+  async function addKeywordAndBlock(keyword, type) {
+    if (!keyword || config.keywords.includes(keyword)) {
+      showToast(type + '已在屏蔽列表中');
+      return;
+    }
+    
+    if (config.keywords.length >= 100) {
+      showToast('关键词数量已达上限(100)');
+      return;
+    }
+    
+    config.keywords.push(keyword);
+    await saveConfig();
+    
+    // 重新处理页面
+    processedElements = new WeakSet();
+    processAllElements();
+    
+    hideHoverMenu();
+    showToast('已添加"' + keyword + '"到屏蔽列表');
+    
+    // 通知 popup
+    try {
+      chrome.runtime.sendMessage({ action: 'keywordAdded', keyword });
+    } catch (e) {}
+  }
+
+  /**
+   * 显示 Toast 提示
+   */
+  function showToast(message) {
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 2147483647;
+      animation: bb-toast-in 0.3s ease;
+    `;
+    
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes bb-toast-in {
+        from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.3s';
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+
+  // ============ OCR 功能 ============
+  async function initOCR() {
+    if (!config.enableOCR || isOCRReady) return;
+    try {
+      if (typeof Tesseract === 'undefined') {
+        console.warn('[B站屏蔽助手] Tesseract.js not loaded');
+        return;
+      }
+      tesseractWorker = await Tesseract.createWorker('chi_sim');
+      isOCRReady = true;
+      console.log('[B站屏蔽助手] OCR ready');
+    } catch (e) {
+      console.error('[B站屏蔽助手] OCR init failed:', e.message);
+    }
+  }
+
+  async function loadImage(imgSrc) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => {
+        const maxWidth = 320;
+        const scale = Math.min(1, maxWidth / img.naturalWidth);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth * scale;
+        canvas.height = img.naturalHeight * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.85);
+      };
+      img.onerror = () => reject(new Error('Image load failed'));
+      img.src = imgSrc;
+    });
+  }
+
+  async function doOCR(imageBlob) {
+    if (!isOCRReady || !tesseractWorker) return null;
+    try {
+      const { data: { text, confidence } } = await tesseractWorker.recognize(imageBlob);
+      return { text: text.trim(), confidence };
+    } catch (e) {
+      console.warn('[B站屏蔽助手] OCR error:', e.message);
+      return null;
+    }
+  }
+
+  function getImageText(img) {
+    const texts = [];
+    if (img.alt) texts.push(img.alt);
+    if (img.title) texts.push(img.title);
+    const parentLink = img.closest('a');
+    if (parentLink?.title) texts.push(parentLink.title);
+    return texts.join(' ');
+  }
+
+  async function analyzeCover(element, videoId) {
+    const results = [];
+    for (const selector of selectors.coverImage) {
+      const img = element.querySelector(selector);
+      if (!img) continue;
+      
+      const altText = getImageText(img);
+      if (altText) {
+        results.push({ text: altText, confidence: 100, source: 'alt' });
+      }
+      
+      if (img.src && !img.src.startsWith('data:')) {
+        const cacheKey = 'ocr_' + img.src;
+        if (ocrCache.has(cacheKey)) {
+          results.push(ocrCache.get(cacheKey));
+          break;
+        }
+        try {
+          const blob = await loadImage(img.src);
+          const ocrResult = await doOCR(blob);
+          if (ocrResult?.text) {
+            const result = { ...ocrResult, source: 'ocr' };
+            ocrCache.set(cacheKey, result);
+            results.push(result);
+          }
+        } catch (e) {
+          console.warn('[B站屏蔽助手] OCR failed:', e.message);
+        }
+        break;
+      }
+    }
+    return results;
+  }
 
   // ============ 核心功能 ============
-
-  // 获取配置
   async function loadConfig() {
     try {
       const result = await chrome.storage.sync.get(['bilibiliBlockerConfig']);
@@ -113,405 +497,275 @@
         config = { ...config, ...result.bilibiliBlockerConfig };
       }
     } catch (e) {
-      console.log('[B站屏蔽助手] 使用默认配置');
+      console.warn('[B站屏蔽助手] Load config failed:', e.message);
     }
   }
 
-  // 保存配置（带防抖，避免频繁写入存储）
   let saveTimer = null;
+  function debouncedSaveConfig() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        await chrome.storage.sync.set({ bilibiliBlockerConfig: config });
+      } catch (e) {}
+    }, 500);
+  }
+  
   async function saveConfig() {
     try {
       await chrome.storage.sync.set({ bilibiliBlockerConfig: config });
-    } catch (e) {
-      console.error('[B站屏蔽助手] 保存配置失败:', e);
-    }
+    } catch (e) {}
   }
 
-  function debouncedSaveConfig() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveConfig, 500);
-  }
-
-  // 检查文本是否包含关键词
-  function containsKeyword(text) {
-    if (!text || !config.keywords.length) return false;
+  function containsKeyword(text, source = '') {
+    if (!text || !config.keywords.length) return { matched: false };
     const lowerText = text.toLowerCase();
-    return config.keywords.some(keyword => {
-      if (!keyword.trim()) return false;
-      return lowerText.includes(keyword.toLowerCase());
-    });
+    for (const keyword of config.keywords) {
+      if (!keyword.trim()) continue;
+      if (lowerText.includes(keyword.toLowerCase())) {
+        console.log('[B站屏蔽助手] Match:', keyword, 'in', source || 'text');
+        return { matched: true, keyword };
+      }
+    }
+    return { matched: false };
   }
 
-  // 获取元素的文本内容（包括子元素）
-  function getElementText(element) {
-    if (!element) return '';
-    return element.textContent || '';
-  }
-
-  // 检查视频卡片是否应该被屏蔽
-  function shouldBlockVideoCard(element) {
-    // 获取标题
-    const titleSelectors = [
-      '.bili-video-card__info--tit a',
-      '.bili-video-card__info--tit',
-      '.video-name',
-      '.title-row a',
-      '.title',
-      'h3 a',
-      'a[title]',
-      '.search-title',
-    ];
-    
-    for (const sel of titleSelectors) {
+  async function shouldBlockVideoCard(element) {
+    for (const sel of selectors.title) {
       const titleEl = element.querySelector(sel);
       if (titleEl) {
-        const title = getElementText(titleEl);
-        if (containsKeyword(title)) {
-          return { blocked: true, reason: `标题: "${title.substring(0, 50)}..."` };
-        }
+        const match = containsKeyword(titleEl.textContent, 'title');
+        if (match.matched) return { blocked: true, reason: '标题含"' + match.keyword + '"' };
       }
     }
 
-    // 检查UP主名
-    const upSelectors = [
-      '.bili-video-card__info--author',
-      '.up-name',
-      '.up-name__display',
-      '.author',
-      '.owner-name',
-      '.up-info .name',
-    ];
-    
-    for (const sel of upSelectors) {
+    for (const sel of selectors.upName) {
       const upEl = element.querySelector(sel);
       if (upEl) {
-        const upName = getElementText(upEl);
-        if (containsKeyword(upName)) {
-          return { blocked: true, reason: `UP主: ${upName}` };
+        const match = containsKeyword(upEl.textContent, 'UP主');
+        if (match.matched) return { blocked: true, reason: 'UP主含"' + match.keyword + '"' };
+      }
+    }
+
+    const match = containsKeyword(element.textContent, 'content');
+    if (match.matched) return { blocked: true, reason: '内容含"' + match.keyword + '"' };
+
+    if (config.enableOCR && isOCRReady) {
+      const videoId = element.dataset.bbId || Math.random().toString(36).substr(2, 9);
+      const results = await analyzeCover(element, videoId);
+      for (const result of results) {
+        const minConf = result.source === 'alt' ? 0 : config.ocrConfidence;
+        if (result.confidence >= minConf) {
+          const match = containsKeyword(result.text, 'image(' + result.source + ')');
+          if (match.matched) {
+            return { blocked: true, reason: '图片含"' + match.keyword + '"(' + Math.round(result.confidence) + '%)' };
+          }
         }
       }
     }
 
-    // 检查整个卡片的文本
-    const fullText = getElementText(element);
-    if (containsKeyword(fullText)) {
-      return { blocked: true, reason: '内容匹配' };
-    }
-
     return { blocked: false };
   }
 
-  // 检查动态是否应该被屏蔽
-  function shouldBlockDynamic(element) {
-    const text = getElementText(element);
-    if (containsKeyword(text)) {
-      return { blocked: true, reason: '动态内容匹配' };
-    }
-    return { blocked: false };
-  }
-
-  // 检查评论是否应该被屏蔽
-  function shouldBlockComment(element) {
-    const text = getElementText(element);
-    if (containsKeyword(text)) {
-      return { blocked: true, reason: '评论内容匹配' };
-    }
-    return { blocked: false };
-  }
-
-  // 屏蔽元素
   function blockElement(element, reason) {
     if (!element || processedElements.has(element)) return;
-
     processedElements.add(element);
     config.blockCount++;
-
-    // 添加屏蔽标记
     element.setAttribute('data-blocked-by', 'bilibili-blocker');
     element.setAttribute('data-block-reason', reason);
-    element.setAttribute('data-block-mode', config.blockMode);
-
+    
     switch (config.blockMode) {
       case 'hide':
         element.style.setProperty('display', 'none', 'important');
         break;
       case 'blur':
         element.style.setProperty('filter', 'blur(8px)', 'important');
-        element.style.setProperty('pointer-events', 'none', 'important');
-        element.style.setProperty('user-select', 'none', 'important');
         break;
       case 'transparent':
         element.style.setProperty('opacity', '0.1', 'important');
-        element.style.setProperty('pointer-events', 'none', 'important');
         break;
     }
-
-    // 添加屏蔽标记（可选显示）
-    if (config.showBlockReason && config.blockMode !== 'hide') {
-      addBlockBadge(element, reason);
-    }
-
-    // 防抖保存统计
     debouncedSaveConfig();
   }
 
-  // 添加屏蔽标记
-  function addBlockBadge(element, reason) {
-    const badge = document.createElement('div');
-    badge.className = 'bilibili-blocker-badge';
-    badge.textContent = `已屏蔽: ${reason}`;
-    badge.style.cssText = `
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(251, 114, 153, 0.9);
-      color: white;
-      padding: 8px 16px;
-      border-radius: 4px;
-      font-size: 12px;
-      z-index: 999999;
-      pointer-events: auto;
-      cursor: pointer;
-      white-space: nowrap;
-    `;
-    badge.onclick = (e) => {
-      e.stopPropagation();
-      element.style.filter = 'none';
-      element.style.opacity = '1';
-      element.style.pointerEvents = 'auto';
-      badge.remove();
-    };
-    
-    if (getComputedStyle(element).position === 'static') {
-      element.style.position = 'relative';
-    }
-    element.appendChild(badge);
-  }
-
-  // ============ 处理函数 ============
-
-  // 处理单个元素
-  function processElement(element) {
+  async function processElement(element) {
     if (!config.enabled || !config.keywords.length) return;
     if (processedElements.has(element)) return;
     if (element.hasAttribute('data-blocked-by')) return;
 
-    const className = typeof element.className === 'string' ? element.className : '';
-
-    // 根据元素类型选择检查方式
-    let result = { blocked: false };
-
-    // 视频卡片
-    if (className.includes('video-card') || 
-        className.includes('card') || 
-        className.includes('item') ||
-        element.matches(selectors.videoCard.join(','))) {
-      result = shouldBlockVideoCard(element);
-    }
-    // 动态
-    else if (className.includes('dyn') || 
-             element.matches(selectors.dynamic.join(','))) {
-      result = shouldBlockDynamic(element);
-    }
-    // 评论
-    else if (className.includes('reply') || 
-             className.includes('comment') ||
-             element.matches(selectors.comment.join(','))) {
-      result = shouldBlockComment(element);
-    }
-    // 通用检查
-    else {
-      const text = getElementText(element);
-      if (containsKeyword(text)) {
-        result = { blocked: true, reason: '内容匹配' };
-      }
-    }
-
+    const result = await shouldBlockVideoCard(element);
     if (result.blocked) {
       blockElement(element, result.reason);
     }
   }
 
-  // 处理页面上的所有元素
   function processAllElements() {
     if (!config.enabled || !config.keywords.length) return;
-
-    const elements = document.querySelectorAll(allSelectors);
-    elements.forEach(processElement);
+    document.querySelectorAll(allSelectors).forEach(el => processElement(el));
   }
 
-  // ============ 监听和初始化 ============
-
-  // 创建 MutationObserver 监听 DOM 变化
   let observer = null;
 
   function startObserver() {
     if (observer) return;
-
-    observer = new MutationObserver((mutations) => {
-      if (!config.enabled || !config.keywords.length) return;
-
-      const elementsToProcess = new Set();
-
+    observer = new MutationObserver(mutations => {
+      if (!config.enabled) return;
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            // 检查元素本身
-            elementsToProcess.add(node);
-            
-            // 检查子元素
-            if (node.matches) {
-              const children = node.querySelectorAll(allSelectors);
-              children.forEach(child => elementsToProcess.add(child));
+            processElement(node);
+            if (node.querySelectorAll) {
+              node.querySelectorAll(allSelectors).forEach(processElement);
             }
           }
         });
       });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 
-      // 批量处理
-      if (elementsToProcess.size > 0) {
-        requestAnimationFrame(() => {
-          elementsToProcess.forEach(processElement);
-        });
+  function removeInitialHideStyle() {
+    const el = document.getElementById('bilibili-blocker-initial-hide');
+    if (el) el.remove();
+  }
+
+  // ============ 悬停事件监听 ============
+  function setupHoverListeners() {
+    let hoverTimeout = null;
+    let isMenuVisible = false;
+    
+    document.addEventListener('mouseover', (e) => {
+      if (!config.enabled || !config.enableHoverMenu) return;
+      
+      const target = e.target.closest(selectors.videoCard.join(', '));
+      if (!target) {
+        // 如果鼠标移出视频卡片，延迟隐藏菜单
+        if (!isMenuVisible) {
+          clearTimeout(hoverTimeout);
+          hoverTimeout = setTimeout(() => {
+            if (!hoverMenuElement?.matches(':hover')) {
+              hideHoverMenu();
+            }
+          }, 300);
+        }
+        return;
+      }
+      
+      // 忽略已屏蔽的视频
+      if (target.hasAttribute('data-blocked-by')) return;
+      
+      clearTimeout(hoverTimeout);
+      hoverTimeout = setTimeout(() => {
+        showHoverMenu(target, e.clientX, e.clientY);
+        isMenuVisible = true;
+      }, 800); // 800ms 延迟显示，避免误触
+    });
+    
+    document.addEventListener('mouseout', (e) => {
+      const target = e.target.closest(selectors.videoCard.join(', '));
+      if (target && !e.relatedTarget?.closest('#bilibili-blocker-hover-menu')) {
+        clearTimeout(hoverTimeout);
+        hoverTimeout = setTimeout(() => {
+          if (!hoverMenuElement?.matches(':hover')) {
+            hideHoverMenu();
+            isMenuVisible = false;
+          }
+        }, 300);
       }
     });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
+    
+    // 点击其他地方隐藏菜单
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#bilibili-blocker-hover-menu')) {
+        hideHoverMenu();
+        isMenuVisible = false;
+      }
     });
   }
 
-  // 停止监听
-  function stopObserver() {
-    if (observer) {
-      observer.disconnect();
-      observer = null;
-    }
-  }
-
-  // 初始化
   async function init() {
     await loadConfig();
-    
     if (!config.enabled) {
-      console.log('[B站屏蔽助手] 已禁用');
+      removeInitialHideStyle();
       return;
     }
 
-    console.log('[B站屏蔽助手] 已启动，关键词:', config.keywords);
-    console.log('[B站屏蔽助手] 屏蔽模式:', config.blockMode);
-
-    // 处理当前页面内容
+    if (config.enableOCR) initOCR();
+    console.log('[B站屏蔽助手] Started, keywords:', config.keywords);
+    
     processAllElements();
-
-    // 开始监听变化
     startObserver();
+    setupHoverListeners();  // 初始化悬停监听
+    setTimeout(removeInitialHideStyle, 300);
   }
 
-  // 监听来自 popup 的消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    switch (message.action) {
-      case 'updateConfig':
-        config = { ...config, ...message.config };
-        saveConfig();
-        // 重置已处理元素集合，以便重新扫描
-        processedElements = new WeakSet();
-        // 移除已有的屏蔽标记
-        document.querySelectorAll('[data-blocked-by]').forEach(el => {
-          el.style.display = '';
-          el.style.filter = '';
-          el.style.opacity = '';
-          el.style.pointerEvents = '';
-          el.style.userSelect = '';
-          el.removeAttribute('data-blocked-by');
-          el.removeAttribute('data-block-reason');
-          el.removeAttribute('data-block-mode');
-          const badge = el.querySelector('.bilibili-blocker-badge');
-          if (badge) badge.remove();
-        });
-        // 如果启用，重新处理
-        if (config.enabled) {
-          processAllElements();
-        }
-        sendResponse({ success: true, blockCount: config.blockCount });
-        break;
-      
-      case 'getConfig':
-        sendResponse({ 
-          config: config,
-          currentUrl: window.location.href 
-        });
-        break;
-      
-      case 'toggle':
-        config.enabled = !config.enabled;
-        saveConfig();
-        if (config.enabled) {
+    (async () => {
+      switch (message.action) {
+        case 'updateConfig':
+          config = { ...config, ...message.config };
+          if (config.enableOCR && !isOCRReady) initOCR();
           processedElements = new WeakSet();
-          processAllElements();
-          startObserver();
-        } else {
-          stopObserver();
-          // 恢复已屏蔽的内容
           document.querySelectorAll('[data-blocked-by]').forEach(el => {
-            el.style.display = '';
-            el.style.filter = '';
-            el.style.opacity = '';
-            el.style.pointerEvents = '';
-            el.style.userSelect = '';
+            el.style.cssText = '';
             el.removeAttribute('data-blocked-by');
             el.removeAttribute('data-block-reason');
-            el.removeAttribute('data-block-mode');
-            const badge = el.querySelector('.bilibili-blocker-badge');
-            if (badge) badge.remove();
           });
-          processedElements = new WeakSet();
-        }
-        sendResponse({ success: true, enabled: config.enabled });
-        break;
-
-      case 'getBlockCount':
-        sendResponse({ blockCount: config.blockCount });
-        break;
-
-      case 'resetCount':
-        config.blockCount = 0;
-        saveConfig();
-        sendResponse({ success: true });
-        break;
-    }
+          if (config.enabled) processAllElements();
+          sendResponse({ success: true });
+          break;
+        case 'getConfig':
+          sendResponse({ config, currentUrl: location.href });
+          break;
+        case 'toggle':
+          config.enabled = !config.enabled;
+          if (config.enabled) {
+            initOCR();
+            processAllElements();
+            startObserver();
+          } else {
+            if (observer) { observer.disconnect(); observer = null; }
+            removeInitialHideStyle();
+            hideHoverMenu();
+          }
+          sendResponse({ success: true, enabled: config.enabled });
+          break;
+        case 'getBlockCount':
+          sendResponse({ blockCount: config.blockCount });
+          break;
+        case 'resetCount':
+          config.blockCount = 0;
+          sendResponse({ success: true });
+          break;
+        case 'getOCRStatus':
+          sendResponse({ enabled: config.enableOCR, ready: isOCRReady, cacheSize: ocrCache.size });
+          break;
+      }
+    })();
     return true;
   });
 
-  // 页面加载完成后初始化
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
   }
 
-  // 监听 SPA 路由变化（B 站是单页应用）
+  let lastUrl = location.href;
   function onUrlChange() {
-    setTimeout(() => {
-      if (config.enabled) {
-        processedElements = new WeakSet();
-        processAllElements();
-      }
-    }, 1000);
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      processedElements = new WeakSet();
+      ocrCache.clear();
+      processAllElements();
+      hideHoverMenu();
+    }
   }
 
-  const origPushState = history.pushState;
-  history.pushState = function() {
-    origPushState.apply(this, arguments);
-    onUrlChange();
-  };
-  const origReplaceState = history.replaceState;
-  history.replaceState = function() {
-    origReplaceState.apply(this, arguments);
-    onUrlChange();
-  };
+  const origPush = history.pushState;
+  history.pushState = function(...args) { origPush.apply(this, args); onUrlChange(); };
+  const origReplace = history.replaceState;
+  history.replaceState = function(...args) { origReplace.apply(this, args); onUrlChange(); };
   window.addEventListener('popstate', onUrlChange);
 
 })();

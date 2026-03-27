@@ -35,6 +35,32 @@
       </div>
     </div>
 
+    <!-- OCR 状态 -->
+    <div class="ocr-status" id="ocrStatus">
+      <div class="ocr-icon">🔍</div>
+      <div class="ocr-info">
+        <div class="ocr-title">智能图像识别</div>
+        <div class="ocr-desc" id="ocrDesc">分析视频封面和画面内容</div>
+      </div>
+      <label class="switch switch-sm">
+        <input type="checkbox" id="ocrToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- 悬停快捷菜单 -->
+    <div class="ocr-status hover-status" id="hoverStatus">
+      <div class="ocr-icon">🖱️</div>
+      <div class="ocr-info">
+        <div class="ocr-title">悬停快捷菜单</div>
+        <div class="ocr-desc">鼠标悬停视频显示快捷屏蔽</div>
+      </div>
+      <label class="switch switch-sm">
+        <input type="checkbox" id="hoverToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+
     <!-- 关键词输入 -->
     <div class="section">
       <div class="section-header">
@@ -48,7 +74,7 @@
       <div class="keywords-list" id="keywordsList">
         <!-- 关键词标签会在这里显示 -->
       </div>
-      <p class="hint">支持屏蔽：视频标题、UP主名称、动态内容、评论等</p>
+      <p class="hint">支持屏蔽：视频标题、UP主名称、视频画面(OCR)、动态内容、评论等</p>
     </div>
 
     <!-- 屏蔽模式 -->
@@ -60,7 +86,7 @@
           <span class="radio-custom"></span>
           <span class="radio-label">
             <strong>完全隐藏</strong>
-            <small>彻底屏蔽，页面更清爽</small>
+            <small>彻底屏蔽，页面最清爽</small>
           </span>
         </label>
         <label class="radio-item">
@@ -103,11 +129,11 @@
     <!-- 页脚 -->
     <footer class="footer">
       <button class="btn-link" id="resetBtn">重置统计</button>
-      <span class="version">v1.0.0</span>
+      <span class="version">v1.0.2</span>
     </footer>
   </div>
 
-  <!-- 导入/导出提示 -->
+  <!-- Toast 提示 -->
   <div class="toast" id="toast"></div>
 
   <script src="popup.js"></script>

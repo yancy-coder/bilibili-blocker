@@ -1,15 +1,22 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "__MSG_extDescription__",
   "default_locale": "zh_CN",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "*://*.bilibili.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/*"],
+      "matches": ["*://*.bilibili.com/*"]
+    }
   ],
   "content_scripts": [
     {
@@ -20,7 +27,7 @@
         "*://space.bilibili.com/*",
         "*://bangumi.bilibili.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["lib/tesseract.v5.min.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
