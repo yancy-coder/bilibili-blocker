@@ -1,5 +1,7 @@
 # B站内容屏蔽助手
 
+> 🤖 **100% AI Generated** - 本项目完全使用 [Claude Code](https://claude.ai/code) + [Kimi K2.5 Thinking](https://kimi.moonshot.cn/) Vibe Coding 开发完成
+
 一个简单实用的 Chrome / Edge 浏览器插件，帮助你在浏览 Bilibili（B站）时自动屏蔽包含特定关键词的内容。
 
 ## 功能特点
@@ -99,6 +101,17 @@
 - 动态页面 (t.bilibili.com)
 - 个人空间 (space.bilibili.com)
 - 番剧/影视 (bangumi.bilibili.com)
+
+## 🚀 开发方式
+
+本项目采用 **Vibe Coding** 方式开发，全程由 AI 辅助完成：
+
+| 工具 | 用途 | 贡献 |
+|------|------|------|
+| **Claude Code** | 主开发工具 | 架构设计、代码实现、调试优化 |
+| **Kimi K2.5 Thinking** | 辅助开发 | 代码审查、逻辑分析、文档编写 |
+
+> 💡 从想法到实现，全程自然语言对话编程，零手写代码。
 
 ## 文件结构
 
